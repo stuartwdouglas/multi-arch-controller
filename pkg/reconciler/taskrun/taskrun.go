@@ -200,17 +200,19 @@ func (r *ReconcileTaskRun) handleProvisionTask(ctx context.Context, log *logr.Lo
 				if failed[0] == "" {
 					failed = []string{}
 				}
-				failed = append(failed, assigned)
-				userTr.Annotations[FailedHosts] = strings.Join(failed, ",")
-				delete(userTr.Labels, AssignedHost)
-				err = r.client.Update(ctx, &userTr)
-				if err != nil {
-					return reconcile.Result{}, err
-				}
-				delete(tr.Labels, AssignedHost)
-				err := r.client.Update(ctx, tr)
-				if err != nil {
-					return reconcile.Result{}, err
+				if !slices.Contains(failed, assigned) {
+					failed = append(failed, assigned)
+					userTr.Annotations[FailedHosts] = strings.Join(failed, ",")
+					delete(userTr.Labels, AssignedHost)
+					err = r.client.Update(ctx, &userTr)
+					if err != nil {
+						return reconcile.Result{}, err
+					}
+					delete(tr.Labels, AssignedHost)
+					err := r.client.Update(ctx, tr)
+					if err != nil {
+						return reconcile.Result{}, err
+					}
 				}
 			}
 		}
@@ -660,7 +662,7 @@ func (a DynamicResolver) Allocate(r *ReconcileTaskRun, ctx context.Context, log 
 
 				delete(tr.Labels, AssignedHost)
 				delete(tr.Annotations, CloudInstanceId)
-				delete(tr.Annotations, CloudDynamicArch)
+				delete(tr.Labels, CloudDynamicArch)
 				err = r.client.Update(ctx, tr)
 				if err != nil {
 					log.Error(err, "Could not unassign task after provisioning failure")
@@ -685,7 +687,9 @@ func (a DynamicResolver) Allocate(r *ReconcileTaskRun, ctx context.Context, log 
 	if err != nil {
 		return reconcile.Result{}, err
 	}
-	if len(taskList.Items) >= a.MaxInstances {
+	existing := len(taskList.Items)
+	log.Info(fmt.Sprintf("%d/%d dynamic tasks are running for arch %s", existing, a.MaxInstances, a.Arch))
+	if existing >= a.MaxInstances {
 		if tr.Labels[WaitingForArchLabel] == a.Arch {
 			//we are already in a waiting state
 			return reconcile.Result{}, nil
