@@ -30,11 +30,13 @@ import (
 )
 
 func main() {
-	var buildahTask string
-	var buildahRemoteTask string
+	var buildahTaskLocation string
+	var buildahRemoteTaskLocation string
+	var gitCloneTaskLocation string
 
-	flag.StringVar(&buildahTask, "buildah-task", "", "The location of the buildah task")
-	flag.StringVar(&buildahRemoteTask, "remote-task", "", "The location of the buildah-remote task to overwrite")
+	flag.StringVar(&buildahTaskLocation, "buildah-task", "", "The location of the buildah task")
+	flag.StringVar(&buildahRemoteTaskLocation, "remote-task", "", "The location of the buildah-remote task to overwrite")
+	flag.StringVar(&gitCloneTaskLocation, "clone-task", "", "The location of the git-clone task")
 
 	opts := zap.Options{
 		Development: true,
@@ -42,21 +44,23 @@ func main() {
 	opts.BindFlags(flag.CommandLine)
 	klog.InitFlags(flag.CommandLine)
 	flag.Parse()
-	if buildahTask == "" || buildahRemoteTask == "" {
-		println("Must specify both buildah-task and remote-task params")
+	if buildahTaskLocation == "" || buildahRemoteTaskLocation == "" || gitCloneTaskLocation == "" {
+		println("Must specify buildah-task,clone-task and remote-task params")
 		os.Exit(1)
 	}
 
-	task := pipelinev1beta1.Task{}
-	streamFileYamlToTektonObj(buildahTask, &task)
+	buildahTask := pipelinev1beta1.Task{}
+	streamFileYamlToTektonObj(buildahTaskLocation, &buildahTask)
+	gitCloneTask := pipelinev1beta1.Task{}
+	streamFileYamlToTektonObj(gitCloneTaskLocation, &gitCloneTask)
 
 	decodingScheme := runtime.NewScheme()
 	utilruntime.Must(pipelinev1beta1.AddToScheme(decodingScheme))
-	convertToSsh(&task)
+	convertToSsh(&buildahTask, &gitCloneTask)
 	y := printers.YAMLPrinter{}
 	b := bytes.Buffer{}
-	_ = y.PrintObj(&task, &b)
-	err := os.WriteFile(buildahRemoteTask, b.Bytes(), 0660)
+	_ = y.PrintObj(&buildahTask, &b)
+	err := os.WriteFile(buildahRemoteTaskLocation, b.Bytes(), 0660)
 	if err != nil {
 		panic(err)
 	}
@@ -85,7 +89,25 @@ func streamFileYamlToTektonObj(path string, obj runtime.Object) runtime.Object {
 //script
 //set 1 sets up the ssh server
 
-func convertToSsh(task *pipelinev1beta1.Task) {
+func convertToSsh(task *pipelinev1beta1.Task, gitCloneTask *pipelinev1beta1.Task) {
+	//rewrite workspaces, git-clone uses the name 'output', buildah uses 'source'
+	for i := range gitCloneTask.Spec.Steps {
+		for j := range gitCloneTask.Spec.Steps[i].Env {
+			gitCloneTask.Spec.Steps[i].Env[j].Value = strings.ReplaceAll(gitCloneTask.Spec.Steps[i].Env[j].Value, "$(workspaces.output", "$(workspaces.source")
+		}
+	}
+
+	//buildah uses step template
+	//move this to be per step
+	st := task.Spec.StepTemplate
+	task.Spec.StepTemplate = nil
+	for i := range task.Spec.Steps {
+		task.Spec.Steps[i].Env = append(task.Spec.Steps[i].Env, st.Env...)
+	}
+
+	task.Spec.Params = append(task.Spec.Params, gitCloneTask.Spec.Params...)
+	task.Spec.Steps = append(gitCloneTask.Spec.Steps, task.Spec.Steps...)
+	task.Spec.Results = append(gitCloneTask.Spec.Results, task.Spec.Results...)
 
 	for stepPod := range task.Spec.Steps {
 		step := &task.Spec.Steps[stepPod]

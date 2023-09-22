@@ -342,6 +342,8 @@ spec:
               value: $(tasks.clone-repository.results.commit)
             - name: PLATFORM
               value: linux/arm64
+            - name: ARCH
+              value: arm64
           runAfter:
             - clone-repository-arm64
           taskRef:
@@ -374,6 +376,8 @@ spec:
               value: $(tasks.clone-repository.results.commit)
             - name: PLATFORM
               value: linux/s390x
+            - name: ARCH
+              value: s390x
           runAfter:
             - clone-repository-s390x
           taskRef:
@@ -406,6 +410,8 @@ spec:
               value: $(tasks.clone-repository.results.commit)
             - name: PLATFORM
               value: linux/ppc64le
+            - name: ARCH
+              value: ppc64le
           runAfter:
             - clone-repository-ppc64le
           taskRef:
