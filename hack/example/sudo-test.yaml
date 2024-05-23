@@ -39,7 +39,6 @@ spec:
         script: |-
           set -o verbose
           set -eu
-          set -o pipefail
           mkdir -p ~/.ssh
           if [ -e "/ssh/error" ]; then
             #no server could be provisioned
@@ -114,17 +113,13 @@ spec:
           EOF
           mkdir output
           
-          mkdir -p output/qcow2 output/image
-          echo "foo" > output/qcow2/disk.qcow2
-          echo "bar" > output/image/disk.raw
-          echo "RUNNING BUILD"
-          podman run --user 0 -v $BUILD_DIR/output:/home/oras/output:Z -v $HOME/.docker:/home/oras/.docker:Z "$ORAS_IMAGE" push --registry-config /home/oras/.docker/oras.json -v quay.io/sdouglas/artifacts:test2 output/qcow2/disk.qcow2:application/vnd.containers.bootc.v1.diskimage+qcow2 output/image/disk.raw:application/vnd.containers.bootc.v1.diskimage+raw
-          
-          exit 0
-          
+          echo "PULLING IMAGE"
           sudo podman pull quay.io/centos-bootc/centos-bootc:stream9
-          sudo podman run --rm -it --privileged --pull=newer --security-opt label=type:unconfined_t -v $(pwd)/config.toml:/config.toml -v $(pwd)/output:/output -v /var/lib/containers/storage:/var/lib/containers/storage quay.io/centos-bootc/bootc-image-builder:latest --type raw --local quay.io/centos-bootc/centos-bootc:stream9
-          podman run --user 0 -v $BUILD_DIR/output:/home/oras/output:Z -v $HOME/.docker:/home/oras/.docker:Z "$ORAS_IMAGE" push --registry-config /home/oras/.docker/oras.json -v quay.io/sdouglas/artifacts:test2 output/qcow2/disk.qcow2:application/vnd.containers.bootc.v1.diskimage+qcow2 output/image/disk.raw:application/vnd.containers.bootc.v1.diskimage+raw
+          echo "RUNNING BUILD"
+          sh -c 'sudo podman run --rm -it --privileged --pull=newer --security-opt label=type:unconfined_t -v $(pwd)/config.toml:/config.toml -v $(pwd)/output:/output -v /var/lib/containers/storage:/var/lib/containers/storage quay.io/centos-bootc/bootc-image-builder:latest --type raw --local quay.io/centos-bootc/centos-bootc:stream9' || true
+          
+          echo "PUSHING OCI ARTIFACT"
+          podman run --user 0 -v $BUILD_DIR/output:/home/oras/output:Z -v $HOME/.docker:/home/oras/.docker:Z "$ORAS_IMAGE" push --registry-config /home/oras/.docker/oras.json -v "$OUTPUT_IMAGE" output/qcow2/disk.qcow2:application/vnd.containers.bootc.v1.diskimage+qcow2 output/image/disk.raw:application/vnd.containers.bootc.v1.diskimage+raw
           REMOTESSHEOF
           
           ssh $SSH_ARGS "$SSH_HOST" "bash -s" <scripts/script-build.sh
