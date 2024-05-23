@@ -1,0 +1,77 @@
+apiVersion: tekton.dev/v1
+kind: TaskRun
+metadata:
+  generateName: sudo-test-
+  namespace: test-jvm-namespace
+spec:
+  serviceAccountName: pipeline
+  timeout: 1h0m0s
+  taskSpec:
+    params:
+      - name: ORAS_IMAGE
+        type: string
+        default: quay.io/redhat-user-workloads/rhtap-integration-tenant/oras-container/oras-container:6aa1a14a41944448e9250853b45f11e91e714afe
+    stepTemplate:
+      env:
+        - name: ORAS_IMAGE
+          value: $(params.ORAS_IMAGE)
+    steps:
+      - image: quay.io/redhat-appstudio/multi-platform-runner:01c7670e81d5120347cf0ad13372742489985e5f@sha256:246adeaaba600e207131d63a7f706cffdcdc37d8f600c56187123ec62823ff44
+        name: build
+        securityContext:
+          runAsUser: 0
+          capabilities:
+            add:
+              - SETFCAP
+        computeResources:
+          limits:
+            memory: 512Mi
+          requests:
+            cpu: 250m
+            memory: 128Mi
+        script: |-
+          set -o verbose
+          set -eu
+          set -o pipefail
+          
+          #copied from konflux-ci/build-trusted-artifacts, as oras is funny about auth
+          cat >fix-auth.sh <<'EOF'
+          original_ref="$1"
+          
+          # Remove digest from image reference
+          ref="${original_ref/@*}"
+          
+          # Remove tag from image reference while making sure optional registry port is taken into account
+          ref="$(echo -n $ref | sed 's_/\(.*\):\(.*\)_/\1_g')"
+          
+          registry="${ref/\/*}"
+          
+          while true; do
+          token=$(< ~/.docker/config.json jq -c '.auths["'$ref'"]')
+          if [[ "$token" != "null" ]]; then
+              >&2 echo "Using token for $ref"
+              echo -n '{"auths": {"'$registry'": '$token'}}' | jq -c .
+                  exit 0
+              fi
+          
+              if [[ "$ref" != *"/"* ]]; then
+                  break
+              fi
+          
+              ref="${ref%*/*}"
+          done
+          
+          >&2 echo "Token not found for $original_ref"
+          
+          echo -n '{"auths": {}}'
+          EOF
+          chmod +x fix-auth.sh
+          ./fix-auth.sh quay.io/sdouglas/artifacts:test2 >/root/.docker/oras.json
+          
+                     
+          mkdir -p output/qcow2 output/image
+          echo "foo" > output/qcow2/disk.qcow
+          echo "bar" > output/image/disk.raw
+          echo "RUNNING BUILD"
+          podman run --user 0 -v output:/home/oras/output:Z -v /root/.docker:/home/oras/.docker:Z "$ORAS_IMAGE" push --registry-config /home/oras/.docker/oras.json -v quay.io/sdouglas/artifacts:test2 output/qcow2/disk.qcow2:application/vnd.containers.bootc.v1.diskimage+qcow2 output/image/disk.raw:application/vnd.containers.bootc.v1.diskimage+raw
+
