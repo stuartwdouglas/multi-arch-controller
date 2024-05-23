@@ -9,6 +9,10 @@ spec:
       value: linux-root/amd64
     - name: OUTPUT_IMAGE
       value: quay.io/sdouglas/artifacts
+    - name: BOOTC_BUILDER_IMAGE
+      value: quay.io/centos-bootc/bootc-image-builder:latest
+    - name: SOURCE_IMAGE
+      value: quay.io/centos-bootc/centos-bootc:stream9
   serviceAccountName: pipeline
   timeout: 1h0m0s
   taskSpec:
@@ -21,12 +25,21 @@ spec:
         default: quay.io/redhat-user-workloads/rhtap-integration-tenant/oras-container/oras-container:6aa1a14a41944448e9250853b45f11e91e714afe
       - name: OUTPUT_IMAGE
         type: string
+      - name: BOOTC_BUILDER_IMAGE
+        type: string
+        default: quay.io/centos-bootc/bootc-image-builder:latest
+      - name: SOURCE_IMAGE
+        type: string
     stepTemplate:
       env:
         - name: ORAS_IMAGE
           value: $(params.ORAS_IMAGE)
         - name: OUTPUT_IMAGE
           value: $(params.OUTPUT_IMAGE)
+        - name: BOOTC_BUILDER_IMAGE
+          value: $(params.BOOTC_BUILDER_IMAGE)
+        - name: SOURCE_IMAGE
+          value: $(params.SOURCE_IMAGE)
     steps:
       - image: quay.io/redhat-appstudio/multi-platform-runner:01c7670e81d5120347cf0ad13372742489985e5f@sha256:246adeaaba600e207131d63a7f706cffdcdc37d8f600c56187123ec62823ff44
         name: build
@@ -57,7 +70,7 @@ spec:
           mkdir -p scripts
           echo "$BUILD_DIR"
           ssh $SSH_ARGS "$SSH_HOST"  mkdir -p "$BUILD_DIR/workspaces" "$BUILD_DIR/scripts" "$BUILD_DIR/tmp"
-          
+          microdnf install jq
           #copied from konflux-ci/build-trusted-artifacts, as oras is funny about auth
           cat >fix-auth.sh <<'EOF'
           original_ref="$1"
@@ -91,6 +104,7 @@ spec:
           EOF
           chmod +x fix-auth.sh
           ./fix-auth.sh quay.io/sdouglas/artifacts:test2 >$HOME/.docker/oras.json
+
           rsync -ra "$HOME/.docker/" "$SSH_HOST:$BUILD_DIR/.docker/"
           
           #we now have an auth file on the vm that will work for oras, we don't override the default so podman still has the full file
@@ -101,6 +115,8 @@ spec:
           export ORAS_IMAGE="$ORAS_IMAGE"
           export BUILD_DIR="$BUILD_DIR"
           export OUTPUT_IMAGE="$OUTPUT_IMAGE"
+          export BOOTC_BUILDER_IMAGE="$BOOTC_BUILDER_IMAGE"
+          export SOURCE_IMAGE="$SOURCE_IMAGE"
           REMOTESSHEOF
           
           #no expansions in this one, the env vars are evaluated on the remote vm
@@ -114,15 +130,17 @@ spec:
           mkdir output
           
           echo "PULLING IMAGE"
-          sudo podman pull quay.io/centos-bootc/centos-bootc:stream9
+          sudo podman pull $SOURCE_IMAGE
           echo "RUNNING BUILD"
-          sh -c 'sudo podman run --rm -it --privileged --pull=newer --security-opt label=type:unconfined_t -v $(pwd)/config.toml:/config.toml -v $(pwd)/output:/output -v /var/lib/containers/storage:/var/lib/containers/storage quay.io/centos-bootc/bootc-image-builder:latest --type raw --local quay.io/centos-bootc/centos-bootc:stream9' || true
+          sudo podman run --rm -it --privileged --pull=newer --security-opt label=type:unconfined_t -v $(pwd)/config.toml:/config.toml -v $(pwd)/output:/output -v /var/lib/containers/storage:/var/lib/containers/storage $BOOTC_BUILDER_IMAGE --type raw --type qcow2 --local $SOURCE_IMAGE
           
           echo "PUSHING OCI ARTIFACT"
-          podman run --user 0 -v $BUILD_DIR/output:/home/oras/output:Z -v $HOME/.docker:/home/oras/.docker:Z "$ORAS_IMAGE" push --registry-config /home/oras/.docker/oras.json -v "$OUTPUT_IMAGE" output/qcow2/disk.qcow2:application/vnd.containers.bootc.v1.diskimage+qcow2 output/image/disk.raw:application/vnd.containers.bootc.v1.diskimage+raw
+          sudo podman run --user 0 -v $(pwd)/output:/home/oras/output:Z -v $HOME/.docker:/home/oras/.docker:Z "$ORAS_IMAGE" push --registry-config /home/oras/.docker/oras.json -v "$OUTPUT_IMAGE" output/qcow2/disk.qcow2:application/vnd.containers.bootc.v1.diskimage+qcow2 output/image/disk.raw:application/vnd.containers.bootc.v1.diskimage+raw
           REMOTESSHEOF
-          
-          ssh $SSH_ARGS "$SSH_HOST" "bash -s" <scripts/script-build.sh
+      
+          chmod +x scripts/script-build.sh
+          rsync -ra scripts "$SSH_HOST:$BUILD_DIR"
+          ssh $SSH_ARGS "$SSH_HOST" $BUILD_DIR/scripts/script-build.sh
         volumeMounts:
           - mountPath: /ssh
             name: ssh
