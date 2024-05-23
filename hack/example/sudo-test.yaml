@@ -41,7 +41,7 @@ spec:
         - name: SOURCE_IMAGE
           value: $(params.SOURCE_IMAGE)
     steps:
-      - image: quay.io/redhat-appstudio/multi-platform-runner:01c7670e81d5120347cf0ad13372742489985e5f@sha256:246adeaaba600e207131d63a7f706cffdcdc37d8f600c56187123ec62823ff44
+      - image: quay.io/redhat-user-workloads/rhtap-build-tenant/multi-arch-controller/hacktask-image-multi-platform-controller:build-09c39-1716452357@sha256:eda615c7127ca024dea0c71b4d639664cad3f51ccaa5ea2f275221db38482698
         name: build
         computeResources:
           limits:
